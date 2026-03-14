@@ -5,6 +5,72 @@ import { requireAdmin } from '../middleware/auth.js';
 
 const router = Router();
 
+// ── "me" routes MUST come before "/:id" routes ───────────
+
+// Get own profile (any authenticated user)
+router.get('/me/profile', async (req, res) => {
+  try {
+    const result = await db.query(
+      'SELECT id, email, name, role, created_at FROM users WHERE id = $1',
+      [req.user.id]
+    );
+    if (!result.rows[0]) return res.status(404).json({ error: 'User not found' });
+    res.json(result.rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Update own profile (any authenticated user)
+router.put('/me/profile', async (req, res) => {
+  try {
+    const { name, email } = req.body;
+    const result = await db.query(
+      `UPDATE users SET
+        name = COALESCE($1, name),
+        email = COALESCE($2, email)
+       WHERE id = $3
+       RETURNING id, email, name, role, created_at`,
+      [name, email, req.user.id]
+    );
+    res.json(result.rows[0]);
+  } catch (err) {
+    if (err.code === '23505') {
+      return res.status(409).json({ error: 'Email already in use' });
+    }
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Change own password (any authenticated user)
+router.put('/me/password', async (req, res) => {
+  try {
+    const { currentPassword, newPassword } = req.body;
+    if (!currentPassword || !newPassword) {
+      return res.status(400).json({ error: 'currentPassword and newPassword required' });
+    }
+    if (newPassword.length < 6) {
+      return res.status(400).json({ error: 'New password must be at least 6 characters' });
+    }
+
+    const user = await db.query('SELECT * FROM users WHERE id = $1', [req.user.id]);
+    if (!user.rows[0]) return res.status(404).json({ error: 'User not found' });
+
+    const valid = await bcrypt.compare(currentPassword, user.rows[0].password_hash);
+    if (!valid) {
+      return res.status(401).json({ error: 'Current password is incorrect' });
+    }
+
+    const passwordHash = await bcrypt.hash(newPassword, 10);
+    await db.query('UPDATE users SET password_hash = $1 WHERE id = $2', [passwordHash, req.user.id]);
+    res.json({ updated: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Admin routes (with /:id param) ───────────────────────
+
 // List all users (admin only)
 router.get('/', requireAdmin, async (req, res) => {
   try {
@@ -117,68 +183,6 @@ router.put('/:id/password', requireAdmin, async (req, res) => {
     if (!result.rows[0]) return res.status(404).json({ error: 'User not found' });
     res.json({ updated: true });
   } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// Change own password (any authenticated user)
-router.put('/me/password', async (req, res) => {
-  try {
-    const { currentPassword, newPassword } = req.body;
-    if (!currentPassword || !newPassword) {
-      return res.status(400).json({ error: 'currentPassword and newPassword required' });
-    }
-    if (newPassword.length < 6) {
-      return res.status(400).json({ error: 'New password must be at least 6 characters' });
-    }
-
-    const user = await db.query('SELECT * FROM users WHERE id = $1', [req.user.id]);
-    if (!user.rows[0]) return res.status(404).json({ error: 'User not found' });
-
-    const valid = await bcrypt.compare(currentPassword, user.rows[0].password_hash);
-    if (!valid) {
-      return res.status(401).json({ error: 'Current password is incorrect' });
-    }
-
-    const passwordHash = await bcrypt.hash(newPassword, 10);
-    await db.query('UPDATE users SET password_hash = $1 WHERE id = $2', [passwordHash, req.user.id]);
-    res.json({ updated: true });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// Get own profile (any authenticated user)
-router.get('/me/profile', async (req, res) => {
-  try {
-    const result = await db.query(
-      'SELECT id, email, name, role, created_at FROM users WHERE id = $1',
-      [req.user.id]
-    );
-    if (!result.rows[0]) return res.status(404).json({ error: 'User not found' });
-    res.json(result.rows[0]);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// Update own profile (any authenticated user)
-router.put('/me/profile', async (req, res) => {
-  try {
-    const { name, email } = req.body;
-    const result = await db.query(
-      `UPDATE users SET
-        name = COALESCE($1, name),
-        email = COALESCE($2, email)
-       WHERE id = $3
-       RETURNING id, email, name, role, created_at`,
-      [name, email, req.user.id]
-    );
-    res.json(result.rows[0]);
-  } catch (err) {
-    if (err.code === '23505') {
-      return res.status(409).json({ error: 'Email already in use' });
-    }
     res.status(500).json({ error: err.message });
   }
 });
