@@ -440,7 +440,7 @@ function DashboardPage({ connectorData, clientData, reportData, runData }) {
 function ConnectorsPage({ data, onRefresh }) {
   const [showAdd, setShowAdd] = useState(false);
   const [step, setStep] = useState(1);
-  const [form, setForm] = useState({ name:"", category:"RMM", baseUrl:"", authType:"apikey", apiKey:"" });
+  const [form, setForm] = useState({ name:"", category:"RMM", baseUrl:"", authType:"apikey", headerName:"X-API-Key", apiKey:"", token:"", clientId:"", clientSecret:"", username:"", password:"" });
   const [docText, setDocText] = useState("");
   const [discovering, setDiscovering] = useState(false);
   const [discoveredFields, setDiscoveredFields] = useState([]);
@@ -449,10 +449,16 @@ function ConnectorsPage({ data, onRefresh }) {
 
   const handleCreate = async () => {
     try {
+      const authConfig = form.authType === "apikey" ? { headerName: form.headerName, apiKey: form.apiKey }
+        : form.authType === "bearer" ? { token: form.token }
+        : form.authType === "oauth" ? { clientId: form.clientId, clientSecret: form.clientSecret }
+        : form.authType === "basic" ? { username: form.username, password: form.password }
+        : undefined;
+
       const connector = await api.connectors.create({
         name: form.name, category: form.category,
         authType: form.authType, baseUrl: form.baseUrl,
-        authConfig: form.apiKey ? { apiKey: form.apiKey } : undefined,
+        authConfig,
       });
 
       if (docText.trim()) {
@@ -496,7 +502,7 @@ function ConnectorsPage({ data, onRefresh }) {
   };
 
   const resetForm = () => {
-    setForm({ name:"", category:"RMM", baseUrl:"", authType:"apikey", apiKey:"" });
+    setForm({ name:"", category:"RMM", baseUrl:"", authType:"apikey", headerName:"X-API-Key", apiKey:"", token:"", clientId:"", clientSecret:"", username:"", password:"" });
     setDocText("");
     setStep(1);
     setDiscoveredFields([]);
@@ -598,11 +604,49 @@ function ConnectorsPage({ data, onRefresh }) {
                   <option value="basic">Basic Auth</option>
                 </select>
               </div>
-              <div style={S.formRow}>
-                <label style={S.label}>API Key / Token</label>
-                <input style={S.input} type="password" placeholder="••••••••••••••••" value={form.apiKey} onChange={e=>setForm({...form,apiKey:e.target.value})} />
-                <div style={{ fontSize:10, color: T.muted, marginTop:4 }}>Encrypted with AES-256 at rest. Never logged or exposed in reports.</div>
-              </div>
+              {form.authType === "apikey" && (
+                <div style={S.formGrid}>
+                  <div style={S.formRow}>
+                    <label style={S.label}>Header Name</label>
+                    <input style={S.input} placeholder="X-API-Key" value={form.headerName} onChange={e=>setForm({...form,headerName:e.target.value})} />
+                  </div>
+                  <div style={S.formRow}>
+                    <label style={S.label}>API Key</label>
+                    <input style={S.input} type="password" placeholder="••••••••••••••••" value={form.apiKey} onChange={e=>setForm({...form,apiKey:e.target.value})} />
+                  </div>
+                </div>
+              )}
+              {form.authType === "bearer" && (
+                <div style={S.formRow}>
+                  <label style={S.label}>Bearer Token</label>
+                  <input style={S.input} type="password" placeholder="••••••••••••••••" value={form.token} onChange={e=>setForm({...form,token:e.target.value})} />
+                </div>
+              )}
+              {form.authType === "oauth" && (
+                <div style={S.formGrid}>
+                  <div style={S.formRow}>
+                    <label style={S.label}>Client ID</label>
+                    <input style={S.input} placeholder="Client ID" value={form.clientId} onChange={e=>setForm({...form,clientId:e.target.value})} />
+                  </div>
+                  <div style={S.formRow}>
+                    <label style={S.label}>Client Secret</label>
+                    <input style={S.input} type="password" placeholder="••••••••••••••••" value={form.clientSecret} onChange={e=>setForm({...form,clientSecret:e.target.value})} />
+                  </div>
+                </div>
+              )}
+              {form.authType === "basic" && (
+                <div style={S.formGrid}>
+                  <div style={S.formRow}>
+                    <label style={S.label}>Username</label>
+                    <input style={S.input} placeholder="Username" value={form.username} onChange={e=>setForm({...form,username:e.target.value})} />
+                  </div>
+                  <div style={S.formRow}>
+                    <label style={S.label}>Password</label>
+                    <input style={S.input} type="password" placeholder="••••••••••••••••" value={form.password} onChange={e=>setForm({...form,password:e.target.value})} />
+                  </div>
+                </div>
+              )}
+              <div style={{ fontSize:10, color: T.muted, marginTop:4 }}>Encrypted with AES-256 at rest. Never logged or exposed in reports.</div>
               <div style={{ display:"flex", justifyContent:"flex-end", gap:10, marginTop:8 }}>
                 <Btn variant="ghost" onClick={()=>setShowAdd(false)}>Cancel</Btn>
                 <Btn variant="primary" onClick={()=>setStep(2)} disabled={!form.name || !form.baseUrl}>Test Connection →</Btn>
