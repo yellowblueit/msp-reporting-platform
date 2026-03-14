@@ -11,8 +11,9 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql/data
       - ./server/src/migrations/001_initial.sql:/docker-entrypoint-initdb.d/001_initial.sql
-    ports:
-      - "5432:5432"
+    # Don't expose DB to the internet in production
+    # ports:
+    #   - "5432:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U nexusmsp"]
       interval: 5s
@@ -22,8 +23,9 @@ services:
   redis:
     image: redis:7-alpine
     restart: unless-stopped
-    ports:
-      - "6379:6379"
+    # Don't expose Redis to the internet in production
+    # ports:
+    #   - "6379:6379"
     volumes:
       - redisdata:/data
     healthcheck:
@@ -48,11 +50,12 @@ services:
       JWT_SECRET: ${JWT_SECRET:-change-this-in-production-please}
       SENDGRID_API_KEY: ${SENDGRID_API_KEY:-}
       FROM_EMAIL: ${FROM_EMAIL:-reports@nexusmsp.local}
-      FRONTEND_URL: http://localhost
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost}
       NODE_ENV: production
       PORT: 3000
-    ports:
-      - "3000:3000"
+    # Only expose internally — nginx proxies /api to this
+    expose:
+      - "3000"
     volumes:
       - reports:/app/reports-output
 
