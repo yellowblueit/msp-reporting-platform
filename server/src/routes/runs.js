@@ -69,10 +69,15 @@ router.get('/:id/download', async (req, res) => {
     const contentTypes = {
       pdf: 'application/pdf',
       csv: 'text/csv',
+      html: 'text/html',
     };
 
     res.setHeader('Content-Type', contentTypes[type] || 'application/octet-stream');
-    res.setHeader('Content-Disposition', `attachment; filename="report.${type}"`);
+    if (type === 'html') {
+      res.setHeader('Content-Disposition', 'inline');
+    } else {
+      res.setHeader('Content-Disposition', `attachment; filename="report.${type}"`);
+    }
 
     const data = await readFile(filePath);
     res.send(data);

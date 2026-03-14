@@ -495,6 +495,45 @@ function ConnectorsPage({ data, onRefresh }) {
     }
   };
 
+  // Field management state
+  const [showFields, setShowFields] = useState(null); // connector object
+  const [connectorFields, setConnectorFields] = useState([]);
+  const [loadingFields, setLoadingFields] = useState(false);
+
+  const handleDeleteConnector = async (connector) => {
+    if (!confirm(`Delete connector "${connector.name}"? This removes all associated fields and client credentials.`)) return;
+    try {
+      await api.connectors.delete(connector.id);
+      setToast({ message: `Connector "${connector.name}" deleted`, type: "success" });
+      onRefresh();
+    } catch (err) {
+      setToast({ message: err.message, type: "error" });
+    }
+  };
+
+  const handleViewFields = async (connector) => {
+    setShowFields(connector);
+    setLoadingFields(true);
+    try {
+      const fields = await api.connectors.fields(connector.id);
+      setConnectorFields(fields);
+    } catch (err) {
+      setToast({ message: err.message, type: "error" });
+      setConnectorFields([]);
+    } finally {
+      setLoadingFields(false);
+    }
+  };
+
+  const handleToggleField = async (field) => {
+    try {
+      await api.connectors.updateField(showFields.id, field.id, { isActive: !field.is_active });
+      setConnectorFields(prev => prev.map(f => f.id === field.id ? { ...f, is_active: !f.is_active } : f));
+    } catch (err) {
+      setToast({ message: err.message, type: "error" });
+    }
+  };
+
   // Custom connector handlers (existing)
   const handleCreate = async () => {
     try {
@@ -648,6 +687,10 @@ function ConnectorsPage({ data, onRefresh }) {
                   <div style={{ fontSize:10, color: T.muted }}>AUTH</div>
                 </div>
               </div>
+              <div style={{ display:"flex", gap:6, marginTop:10, paddingTop:10, borderTop:`1px solid ${T.border}` }}>
+                <Btn variant="ghost" style={{ padding:"4px 10px", fontSize:10, flex:1 }} onClick={(e)=>{e.stopPropagation();handleViewFields(c);}}>Fields</Btn>
+                <Btn variant="danger" style={{ padding:"4px 10px", fontSize:10 }} onClick={(e)=>{e.stopPropagation();handleDeleteConnector(c);}}>Delete</Btn>
+              </div>
             </div>
           ))}
           {data.length === 0 && (
@@ -682,6 +725,51 @@ function ConnectorsPage({ data, onRefresh }) {
               disabled={!(showCreds.template.auth_fields || []).every(f => credForm[f.key])}>
               Save Credentials
             </Btn>
+          </div>
+        </Modal>
+      )}
+
+      {/* ── Field Management Modal ── */}
+      {showFields && (
+        <Modal title={`${showFields.name} — Field Catalog`} onClose={()=>setShowFields(null)} width="700px">
+          <div style={{ marginBottom:12, fontSize:12, color: T.textDim }}>
+            Toggle fields on/off to control which ones appear in the Report Builder palette.
+          </div>
+          {loadingFields ? (
+            <div style={{ textAlign:"center", color: T.muted, padding:24 }}>Loading fields...</div>
+          ) : connectorFields.length === 0 ? (
+            <div style={{ textAlign:"center", color: T.muted, padding:24 }}>No fields discovered for this connector.</div>
+          ) : (
+            <div style={{ background: T.surface, border:`1px solid ${T.border}`, borderRadius:8, maxHeight:400, overflowY:"auto" }}>
+              <table style={S.table}>
+                <thead><tr>
+                  <th style={S.th}>Active</th>
+                  <th style={S.th}>Field Name</th>
+                  <th style={S.th}>Label</th>
+                  <th style={S.th}>Type</th>
+                  <th style={S.th}>Endpoint</th>
+                </tr></thead>
+                <tbody>
+                  {connectorFields.map(f=>(
+                    <tr key={f.id}>
+                      <td style={S.td}>
+                        <input type="checkbox" checked={f.is_active} onChange={()=>handleToggleField(f)} style={{ accentColor: T.accent, cursor:"pointer" }} />
+                      </td>
+                      <td style={{ ...S.td, fontFamily: T.font, color: f.is_active ? T.accent : T.muted, fontSize:11 }}>{f.field_name}</td>
+                      <td style={{ ...S.td, color: f.is_active ? T.text : T.muted }}>{f.display_label}</td>
+                      <td style={S.td}><Badge label={f.data_type} color={f.is_active ? T.accent : T.muted} /></td>
+                      <td style={{ ...S.td, color: T.muted, fontSize:11 }}>{f.endpoint}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+          <div style={{ display:"flex", justifyContent:"space-between", marginTop:12 }}>
+            <span style={{ fontSize:11, color: T.muted }}>
+              {connectorFields.filter(f=>f.is_active).length}/{connectorFields.length} fields active
+            </span>
+            <Btn variant="ghost" onClick={()=>setShowFields(null)}>Close</Btn>
           </div>
         </Modal>
       )}
@@ -1097,30 +1185,58 @@ function ReportBuilderPage({ connectorData, onRefresh }) {
 }
 
 // ── Page: Reports Library ─────────────────────────────────
-function ReportsPage({ data, clientData, onRefresh }) {
+function ReportsPage({ data, clientData, runData, onRefresh }) {
   const [hoverRow, setHoverRow] = useState(null);
   const [toast, setToast] = useState(null);
+  const [runClient, setRunClient] = useState("");
+  const [showRuns, setShowRuns] = useState(false);
+  const [filterClient, setFilterClient] = useState("");
 
   const handleRun = async (templateId) => {
-    if (!clientData.length) {
+    const cid = runClient || (clientData.length ? clientData[0].id : null);
+    if (!cid) {
       setToast({ message: "No clients configured", type: "warning" });
       return;
     }
     try {
-      await api.templates.run(templateId, { clientId: clientData[0].id, outputTypes: ["pdf"] });
+      await api.templates.run(templateId, { clientId: cid, outputTypes: ["pdf", "csv"] });
       setToast({ message: "Report queued", type: "success" });
+      onRefresh();
     } catch (err) {
       setToast({ message: err.message, type: "error" });
     }
   };
 
+  const handleDelete = async (template) => {
+    if (!confirm(`Delete template "${template.name}"? This cannot be undone.`)) return;
+    try {
+      await api.templates.delete(template.id);
+      setToast({ message: "Template deleted", type: "success" });
+      onRefresh();
+    } catch (err) {
+      setToast({ message: err.message, type: "error" });
+    }
+  };
+
+  const filteredRuns = filterClient ? runData.filter(r => r.client_id === filterClient) : runData;
+
   return (
     <div>
       {toast && <Toast {...toast} onClose={()=>setToast(null)} />}
+
+      {/* Templates */}
       <div style={{ display:"flex", justifyContent:"space-between", marginBottom:20, alignItems:"center" }}>
         <div>
           <div style={{ fontFamily: T.display, fontWeight:700, fontSize:18, marginBottom:4 }}>Report Templates</div>
           <div style={{ color: T.muted, fontSize:12 }}>Manage scheduled and on-demand reports across all clients.</div>
+        </div>
+        <div style={{ display:"flex", gap:8, alignItems:"center" }}>
+          {clientData.length > 0 && (
+            <select style={{ ...S.select, width:180 }} value={runClient} onChange={e=>setRunClient(e.target.value)}>
+              <option value="">Run for client...</option>
+              {clientData.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}
+            </select>
+          )}
         </div>
       </div>
 
@@ -1142,6 +1258,7 @@ function ReportsPage({ data, clientData, onRefresh }) {
                   <td style={S.td}>
                     <div style={{ display:"flex", gap:6 }}>
                       <Btn variant="success" style={{ padding:"4px 10px", fontSize:11 }} onClick={()=>handleRun(r.id)}>⚡ Run</Btn>
+                      <Btn variant="danger" style={{ padding:"4px 10px", fontSize:11 }} onClick={()=>handleDelete(r)}>Delete</Btn>
                     </div>
                   </td>
                 </tr>
@@ -1150,6 +1267,293 @@ function ReportsPage({ data, clientData, onRefresh }) {
           </table>
         )}
       </div>
+
+      {/* Report Runs / History */}
+      <div style={{ marginTop:24 }}>
+        <div style={{ display:"flex", justifyContent:"space-between", marginBottom:16, alignItems:"center" }}>
+          <div>
+            <div style={{ fontFamily: T.display, fontWeight:700, fontSize:16, marginBottom:4 }}>Report Runs</div>
+            <div style={{ color: T.muted, fontSize:12 }}>View and download completed report outputs.</div>
+          </div>
+          <select style={{ ...S.select, width:200 }} value={filterClient} onChange={e=>setFilterClient(e.target.value)}>
+            <option value="">All Clients</option>
+            {clientData.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}
+          </select>
+        </div>
+
+        <div style={S.card}>
+          {filteredRuns.length === 0 ? (
+            <div style={{ color: T.muted, fontSize:12, textAlign:"center", padding:24 }}>No report runs yet.</div>
+          ) : (
+            <table style={S.table}>
+              <thead><tr>{["Report","Client","Status","When","Downloads"].map(h=><th key={h} style={S.th}>{h}</th>)}</tr></thead>
+              <tbody>
+                {filteredRuns.map(r=>(
+                  <tr key={r.id}>
+                    <td style={S.td}><span style={{ fontWeight:600 }}>{r.template_name}</span></td>
+                    <td style={{ ...S.td, color: T.textDim }}>{r.client_name}</td>
+                    <td style={S.td}>
+                      <span style={{ display:"flex", alignItems:"center", gap:6 }}>
+                        <StatusDot status={r.status==="success"?"active":r.status==="failed"?"error":"warning"} />
+                        <span style={{ fontSize:11, color: r.status==="success"?T.green:r.status==="failed"?T.red:T.amber }}>{r.status}</span>
+                      </span>
+                    </td>
+                    <td style={{ ...S.td, color: T.muted, fontSize:11 }}>{r.created_at ? new Date(r.created_at).toLocaleString() : "—"}</td>
+                    <td style={S.td}>
+                      {r.status === "success" && (
+                        <div style={{ display:"flex", gap:6 }}>
+                          <a href={`/api/runs/${r.id}/download?type=html`} target="_blank" rel="noopener noreferrer"
+                            style={{ ...S.btn("ghost"), padding:"3px 8px", fontSize:10, textDecoration:"none", color: T.accent, border:`1px solid ${T.accent}30`, borderRadius:4, display:"inline-flex", alignItems:"center" }}>View</a>
+                          <a href={`/api/runs/${r.id}/download?type=pdf`} target="_blank" rel="noopener noreferrer"
+                            style={{ ...S.btn("ghost"), padding:"3px 8px", fontSize:10, textDecoration:"none", color: T.textDim, border:`1px solid ${T.border}`, borderRadius:4, display:"inline-flex", alignItems:"center" }}>PDF</a>
+                          <a href={`/api/runs/${r.id}/download?type=csv`} target="_blank" rel="noopener noreferrer"
+                            style={{ ...S.btn("ghost"), padding:"3px 8px", fontSize:10, textDecoration:"none", color: T.textDim, border:`1px solid ${T.border}`, borderRadius:4, display:"inline-flex", alignItems:"center" }}>CSV</a>
+                        </div>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Page: Schedules & Jobs ─────────────────────────────────
+function SchedulesPage({ scheduleData, runData, clientData, templateData, onRefresh }) {
+  const [toast, setToast] = useState(null);
+  const [filterClient, setFilterClient] = useState("");
+  const [view, setView] = useState("list"); // "list" or "calendar"
+  const [calMonth, setCalMonth] = useState(() => { const d = new Date(); return { year: d.getFullYear(), month: d.getMonth() }; });
+
+  const handleDeleteSchedule = async (schedule) => {
+    if (!confirm(`Delete schedule for "${schedule.template_name}"?`)) return;
+    try {
+      await api.schedules.delete(schedule.id);
+      setToast({ message: "Schedule deleted", type: "success" });
+      onRefresh();
+    } catch (err) {
+      setToast({ message: err.message, type: "error" });
+    }
+  };
+
+  const handleToggleSchedule = async (schedule) => {
+    try {
+      await api.schedules.update(schedule.id, { isActive: !schedule.is_active });
+      setToast({ message: `Schedule ${schedule.is_active ? "paused" : "resumed"}`, type: "success" });
+      onRefresh();
+    } catch (err) {
+      setToast({ message: err.message, type: "error" });
+    }
+  };
+
+  // Filter schedules by client
+  const filteredSchedules = filterClient
+    ? scheduleData.filter(s => (s.client_ids || []).includes(filterClient))
+    : scheduleData;
+
+  // Filter runs by client
+  const filteredRuns = filterClient
+    ? runData.filter(r => r.client_id === filterClient)
+    : runData;
+
+  // Parse cron to human-readable
+  const cronToHuman = (cron) => {
+    if (!cron) return "Unknown";
+    const parts = cron.split(" ");
+    if (parts.length < 5) return cron;
+    const [min, hr, dom, mon, dow] = parts;
+    if (dom !== "*" && mon !== "*") return `Monthly on day ${dom}`;
+    if (dow !== "*") {
+      const days = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+      const dayName = days[parseInt(dow)] || dow;
+      return `Weekly on ${dayName} at ${hr}:${min.padStart(2,"0")}`;
+    }
+    if (hr !== "*" && min !== "*") return `Daily at ${hr}:${min.padStart(2,"0")}`;
+    return cron;
+  };
+
+  // Calendar helpers
+  const daysInMonth = (year, month) => new Date(year, month + 1, 0).getDate();
+  const firstDayOfMonth = (year, month) => new Date(year, month, 1).getDay();
+  const monthNames = ["January","February","March","April","May","June","July","August","September","October","November","December"];
+
+  const calDays = daysInMonth(calMonth.year, calMonth.month);
+  const calStart = firstDayOfMonth(calMonth.year, calMonth.month);
+
+  // Get runs for a specific calendar day
+  const getRunsForDay = (day) => {
+    const dateStr = `${calMonth.year}-${String(calMonth.month+1).padStart(2,"0")}-${String(day).padStart(2,"0")}`;
+    return filteredRuns.filter(r => r.created_at && r.created_at.startsWith(dateStr));
+  };
+
+  const prevMonth = () => setCalMonth(prev => prev.month === 0 ? { year: prev.year - 1, month: 11 } : { year: prev.year, month: prev.month - 1 });
+  const nextMonth = () => setCalMonth(prev => prev.month === 11 ? { year: prev.year + 1, month: 0 } : { year: prev.year, month: prev.month + 1 });
+
+  return (
+    <div>
+      {toast && <Toast {...toast} onClose={()=>setToast(null)} />}
+
+      <div style={{ display:"flex", justifyContent:"space-between", marginBottom:20, alignItems:"center" }}>
+        <div>
+          <div style={{ fontFamily: T.display, fontWeight:700, fontSize:18, marginBottom:4 }}>Schedules & Jobs</div>
+          <div style={{ color: T.muted, fontSize:12 }}>View all scheduled reports and their run history.</div>
+        </div>
+        <div style={{ display:"flex", gap:8, alignItems:"center" }}>
+          <select style={{ ...S.select, width:200 }} value={filterClient} onChange={e=>setFilterClient(e.target.value)}>
+            <option value="">All Clients</option>
+            {clientData.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}
+          </select>
+          <div style={{ display:"flex", background: T.surface, borderRadius:6, border:`1px solid ${T.border}`, overflow:"hidden" }}>
+            {["list","calendar"].map(v=>(
+              <button key={v} onClick={()=>setView(v)} style={{
+                padding:"6px 14px", border:"none", cursor:"pointer", fontSize:11, fontFamily: T.font,
+                background: view===v ? `${T.accent}20` : "transparent",
+                color: view===v ? T.accent : T.textDim,
+              }}>{v === "list" ? "List" : "Calendar"}</button>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* Active Schedules */}
+      <div style={{ marginBottom:24 }}>
+        <div style={{ fontFamily: T.display, fontWeight:700, fontSize:15, marginBottom:12, color: T.text }}>Active Schedules ({filteredSchedules.length})</div>
+        <div style={S.card}>
+          {filteredSchedules.length === 0 ? (
+            <div style={{ color: T.muted, fontSize:12, textAlign:"center", padding:24 }}>No schedules configured. Create one from the Report Builder.</div>
+          ) : (
+            <table style={S.table}>
+              <thead><tr>{["Report","Schedule","Clients","Output","Status",""].map(h=><th key={h} style={S.th}>{h}</th>)}</tr></thead>
+              <tbody>
+                {filteredSchedules.map(s=>(
+                  <tr key={s.id}>
+                    <td style={S.td}><span style={{ fontWeight:600 }}>{s.template_name}</span></td>
+                    <td style={{ ...S.td, color: T.textDim, fontSize:11 }}>{cronToHuman(s.cron_expr)}</td>
+                    <td style={S.td}>
+                      <div style={{ display:"flex", gap:4, flexWrap:"wrap" }}>
+                        {(s.client_ids || []).map(cid => {
+                          const cl = clientData.find(c=>c.id===cid);
+                          return <span key={cid} style={{ ...S.badge(T.accent), fontSize:9 }}>{cl?.name || "Unknown"}</span>;
+                        })}
+                        {(s.client_ids || []).length === 0 && <span style={{ color: T.muted, fontSize:11 }}>No clients</span>}
+                      </div>
+                    </td>
+                    <td style={S.td}>
+                      <div style={{ display:"flex", gap:4 }}>
+                        {(s.output_types || []).map(t=><span key={t} style={{ ...S.badge(T.muted), fontSize:9, textTransform:"uppercase" }}>{t}</span>)}
+                      </div>
+                    </td>
+                    <td style={S.td}>
+                      <span style={{ display:"flex", alignItems:"center", gap:6 }}>
+                        <StatusDot status={s.is_active ? "active" : "inactive"} />
+                        <span style={{ fontSize:11, color: s.is_active ? T.green : T.muted }}>{s.is_active ? "Active" : "Paused"}</span>
+                      </span>
+                    </td>
+                    <td style={S.td}>
+                      <div style={{ display:"flex", gap:6 }}>
+                        <Btn variant="ghost" style={{ padding:"4px 10px", fontSize:10 }} onClick={()=>handleToggleSchedule(s)}>
+                          {s.is_active ? "Pause" : "Resume"}
+                        </Btn>
+                        <Btn variant="danger" style={{ padding:"4px 10px", fontSize:10 }} onClick={()=>handleDeleteSchedule(s)}>Delete</Btn>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      </div>
+
+      {/* View: List or Calendar */}
+      {view === "list" ? (
+        <div>
+          <div style={{ fontFamily: T.display, fontWeight:700, fontSize:15, marginBottom:12, color: T.text }}>Recent Runs ({filteredRuns.length})</div>
+          <div style={S.card}>
+            {filteredRuns.length === 0 ? (
+              <div style={{ color: T.muted, fontSize:12, textAlign:"center", padding:24 }}>No report runs yet.</div>
+            ) : (
+              <table style={S.table}>
+                <thead><tr>{["Report","Client","Status","Triggered","When","Downloads"].map(h=><th key={h} style={S.th}>{h}</th>)}</tr></thead>
+                <tbody>
+                  {filteredRuns.map(r=>(
+                    <tr key={r.id}>
+                      <td style={S.td}><span style={{ fontWeight:600 }}>{r.template_name}</span></td>
+                      <td style={{ ...S.td, color: T.textDim }}>{r.client_name}</td>
+                      <td style={S.td}>
+                        <span style={{ display:"flex", alignItems:"center", gap:6 }}>
+                          <StatusDot status={r.status==="success"?"active":r.status==="failed"?"error":"warning"} />
+                          <span style={{ fontSize:11, color: r.status==="success"?T.green:r.status==="failed"?T.red:T.amber }}>{r.status}</span>
+                        </span>
+                      </td>
+                      <td style={{ ...S.td, fontSize:11 }}>
+                        <Badge label={r.triggered_by || "manual"} color={r.triggered_by === "schedule" ? T.accent : T.muted} />
+                      </td>
+                      <td style={{ ...S.td, color: T.muted, fontSize:11 }}>{r.created_at ? new Date(r.created_at).toLocaleString() : "—"}</td>
+                      <td style={S.td}>
+                        {r.status === "success" && (
+                          <div style={{ display:"flex", gap:6 }}>
+                            <a href={`/api/runs/${r.id}/download?type=html`} target="_blank" rel="noopener noreferrer"
+                              style={{ padding:"2px 6px", fontSize:9, textDecoration:"none", color: T.accent, border:`1px solid ${T.accent}30`, borderRadius:3 }}>View</a>
+                            <a href={`/api/runs/${r.id}/download?type=pdf`} target="_blank" rel="noopener noreferrer"
+                              style={{ padding:"2px 6px", fontSize:9, textDecoration:"none", color: T.textDim, border:`1px solid ${T.border}`, borderRadius:3 }}>PDF</a>
+                            <a href={`/api/runs/${r.id}/download?type=csv`} target="_blank" rel="noopener noreferrer"
+                              style={{ padding:"2px 6px", fontSize:9, textDecoration:"none", color: T.textDim, border:`1px solid ${T.border}`, borderRadius:3 }}>CSV</a>
+                          </div>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        </div>
+      ) : (
+        <div>
+          <div style={{ display:"flex", alignItems:"center", gap:16, marginBottom:16 }}>
+            <Btn variant="ghost" style={{ padding:"4px 10px", fontSize:12 }} onClick={prevMonth}>←</Btn>
+            <div style={{ fontFamily: T.display, fontWeight:700, fontSize:15 }}>{monthNames[calMonth.month]} {calMonth.year}</div>
+            <Btn variant="ghost" style={{ padding:"4px 10px", fontSize:12 }} onClick={nextMonth}>→</Btn>
+          </div>
+          <div style={S.card}>
+            <div style={{ display:"grid", gridTemplateColumns:"repeat(7,1fr)", gap:1, background: T.border }}>
+              {["Sun","Mon","Tue","Wed","Thu","Fri","Sat"].map(d=>(
+                <div key={d} style={{ background: T.panel, padding:"8px 4px", textAlign:"center", fontSize:10, fontWeight:700, color: T.muted, textTransform:"uppercase" }}>{d}</div>
+              ))}
+              {Array.from({ length: calStart }, (_, i) => (
+                <div key={`empty-${i}`} style={{ background: T.surface, padding:8, minHeight:80 }} />
+              ))}
+              {Array.from({ length: calDays }, (_, i) => {
+                const day = i + 1;
+                const dayRuns = getRunsForDay(day);
+                const today = new Date();
+                const isToday = day === today.getDate() && calMonth.month === today.getMonth() && calMonth.year === today.getFullYear();
+                return (
+                  <div key={day} style={{ background: isToday ? `${T.accent}08` : T.surface, padding:6, minHeight:80, border: isToday ? `1px solid ${T.accent}30` : "none" }}>
+                    <div style={{ fontSize:11, fontWeight: isToday ? 800 : 400, color: isToday ? T.accent : T.textDim, marginBottom:4 }}>{day}</div>
+                    {dayRuns.slice(0, 3).map(r => (
+                      <div key={r.id} style={{
+                        fontSize:9, padding:"2px 4px", borderRadius:3, marginBottom:2, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap",
+                        background: r.status === "success" ? `${T.green}15` : r.status === "failed" ? `${T.red}15` : `${T.amber}15`,
+                        color: r.status === "success" ? T.green : r.status === "failed" ? T.red : T.amber,
+                        border: `1px solid ${r.status === "success" ? T.green : r.status === "failed" ? T.red : T.amber}20`,
+                      }}>
+                        {r.template_name}
+                      </div>
+                    ))}
+                    {dayRuns.length > 3 && <div style={{ fontSize:9, color: T.muted }}>+{dayRuns.length - 3} more</div>}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -1166,6 +1570,17 @@ function ClientsPage({ data, connectorData, onRefresh }) {
       await api.clients.create(form);
       setShowAdd(false);
       setToast({ message: `Client "${form.name}" created`, type: "success" });
+      onRefresh();
+    } catch (err) {
+      setToast({ message: err.message, type: "error" });
+    }
+  };
+
+  const handleDelete = async (client) => {
+    if (!confirm(`Delete client "${client.name}"? This will remove all associated credentials and data.`)) return;
+    try {
+      await api.clients.delete(client.id);
+      setToast({ message: `Client "${client.name}" deleted`, type: "success" });
       onRefresh();
     } catch (err) {
       setToast({ message: err.message, type: "error" });
@@ -1209,7 +1624,12 @@ function ClientsPage({ data, connectorData, onRefresh }) {
                       <span style={{ fontSize:11, color: c.status==="active" ? T.green : T.muted }}>{c.status}</span>
                     </span>
                   </td>
-                  <td style={S.td}><Btn variant="ghost" style={{ padding:"4px 10px", fontSize:11 }}>Manage</Btn></td>
+                  <td style={S.td}>
+                    <div style={{ display:"flex", gap:6 }}>
+                      <Btn variant="ghost" style={{ padding:"4px 10px", fontSize:11 }}>Manage</Btn>
+                      <Btn variant="danger" style={{ padding:"4px 10px", fontSize:11 }} onClick={()=>handleDelete(c)}>Delete</Btn>
+                    </div>
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -1563,6 +1983,7 @@ const NAV = [
   { id:"connectors", label:"Connectors", icon:"⬡" },
   { id:"builder", label:"Report Builder", icon:"⊞" },
   { id:"reports", label:"Report Library", icon:"≡" },
+  { id:"schedules", label:"Schedules & Jobs", icon:"⏱" },
   { id:"clients", label:"Clients", icon:"◉" },
   { id:"users", label:"Users", icon:"👤" },
   { id:"settings", label:"Settings", icon:"⚙" },
@@ -1571,6 +1992,7 @@ const NAV = [
 const PAGE_TITLES = {
   dashboard:"Dashboard", connectors:"Integration Connectors",
   builder:"Report Builder", reports:"Report Library",
+  schedules:"Schedules & Jobs",
   clients:"Client Management", users:"User Management", settings:"Settings",
 };
 
@@ -1582,6 +2004,7 @@ export default function App() {
   const [clientData, setClientData] = useState([]);
   const [templateData, setTemplateData] = useState([]);
   const [runData, setRunData] = useState([]);
+  const [scheduleData, setScheduleData] = useState([]);
   const [apiConnected, setApiConnected] = useState(false);
 
   // Check for existing session
@@ -1594,16 +2017,18 @@ export default function App() {
 
   const loadAllData = useCallback(async () => {
     try {
-      const [c, cl, t, r] = await Promise.all([
+      const [c, cl, t, r, s] = await Promise.all([
         api.connectors.list().catch(() => []),
         api.clients.list().catch(() => []),
         api.templates.list().catch(() => []),
-        api.runs.list({ limit: 20 }).catch(() => []),
+        api.runs.list({ limit: 50 }).catch(() => []),
+        api.schedules.list().catch(() => []),
       ]);
       setConnectorData(c);
       setClientData(cl);
       setTemplateData(t);
       setRunData(r);
+      setScheduleData(s);
       setApiConnected(true);
     } catch {
       setApiConnected(false);
@@ -1630,7 +2055,8 @@ export default function App() {
       case "dashboard": return <DashboardPage connectorData={connectorData} clientData={clientData} reportData={templateData} runData={runData} />;
       case "connectors": return <ConnectorsPage data={connectorData} onRefresh={loadAllData} />;
       case "builder": return <ReportBuilderPage connectorData={connectorData} onRefresh={loadAllData} />;
-      case "reports": return <ReportsPage data={templateData} clientData={clientData} onRefresh={loadAllData} />;
+      case "reports": return <ReportsPage data={templateData} clientData={clientData} runData={runData} onRefresh={loadAllData} />;
+      case "schedules": return <SchedulesPage scheduleData={scheduleData} runData={runData} clientData={clientData} templateData={templateData} onRefresh={loadAllData} />;
       case "clients": return <ClientsPage data={clientData} connectorData={connectorData} onRefresh={loadAllData} />;
       case "users": return <UsersPage currentUser={user} />;
       case "settings": return <SettingsPage currentUser={user} />;
