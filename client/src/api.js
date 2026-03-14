@@ -100,6 +100,20 @@ export const ai = {
     request('POST', '/ai/suggest-fields', { currentColumns, connectorIds }),
 };
 
+// Users
+export const users = {
+  list: () => request('GET', '/users'),
+  get: (id) => request('GET', `/users/${id}`),
+  create: (data) => request('POST', '/users', data),
+  update: (id, data) => request('PUT', `/users/${id}`, data),
+  delete: (id) => request('DELETE', `/users/${id}`),
+  resetPassword: (id, password) => request('PUT', `/users/${id}/password`, { password }),
+  changeMyPassword: (currentPassword, newPassword) =>
+    request('PUT', '/users/me/password', { currentPassword, newPassword }),
+  getProfile: () => request('GET', '/users/me/profile'),
+  updateProfile: (data) => request('PUT', '/users/me/profile', data),
+};
+
 // Settings
 export const settings = {
   get: () => request('GET', '/settings'),

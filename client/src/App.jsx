@@ -1057,10 +1057,13 @@ function ClientsPage({ data, connectorData, onRefresh }) {
 }
 
 // ── Page: Settings ────────────────────────────────────────
-function SettingsPage() {
+function SettingsPage({ currentUser }) {
   const [showKey, setShowKey] = useState(false);
   const [settingsData, setSettingsData] = useState({});
   const [toast, setToast] = useState(null);
+  const [currentPw, setCurrentPw] = useState("");
+  const [newPw, setNewPw] = useState("");
+  const [confirmPw, setConfirmPw] = useState("");
 
   useEffect(() => {
     api.settings.get().then(setSettingsData).catch(() => {});
@@ -1075,10 +1078,50 @@ function SettingsPage() {
     }
   };
 
+  const handleChangePassword = async () => {
+    if (newPw !== confirmPw) {
+      setToast({ message: "Passwords do not match", type: "error" });
+      return;
+    }
+    try {
+      await api.users.changeMyPassword(currentPw, newPw);
+      setCurrentPw(""); setNewPw(""); setConfirmPw("");
+      setToast({ message: "Password changed successfully", type: "success" });
+    } catch (err) {
+      setToast({ message: err.message, type: "error" });
+    }
+  };
+
   return (
     <div style={{ maxWidth:700 }}>
       {toast && <Toast {...toast} onClose={()=>setToast(null)} />}
       <div style={{ fontFamily: T.display, fontWeight:700, fontSize:18, marginBottom:20 }}>Platform Settings</div>
+
+      {/* Change Password */}
+      <div style={S.card}>
+        <div style={S.cardHeader}>
+          <span style={S.cardTitle}>Change Your Password</span>
+          <Badge label={currentUser?.role || "user"} color={currentUser?.role === "admin" ? T.amber : T.accent} />
+        </div>
+        <div style={S.formRow}>
+          <label style={S.label}>Current Password</label>
+          <input style={S.input} type="password" value={currentPw} onChange={e=>setCurrentPw(e.target.value)} placeholder="Enter current password" />
+        </div>
+        <div style={S.formGrid}>
+          <div style={S.formRow}>
+            <label style={S.label}>New Password</label>
+            <input style={S.input} type="password" value={newPw} onChange={e=>setNewPw(e.target.value)} placeholder="Minimum 6 characters" />
+          </div>
+          <div style={S.formRow}>
+            <label style={S.label}>Confirm New Password</label>
+            <input style={S.input} type="password" value={confirmPw} onChange={e=>setConfirmPw(e.target.value)} placeholder="Re-enter new password" />
+          </div>
+        </div>
+        {newPw && confirmPw && newPw !== confirmPw && (
+          <div style={{ color: T.red, fontSize:11, marginBottom:8 }}>Passwords do not match</div>
+        )}
+        <Btn variant="primary" onClick={handleChangePassword} disabled={!currentPw || newPw.length < 6 || newPw !== confirmPw}>Update Password</Btn>
+      </div>
 
       <div style={S.card}>
         <div style={S.cardHeader}>
@@ -1139,6 +1182,178 @@ function SettingsPage() {
   );
 }
 
+// ── Page: Users ───────────────────────────────────────────
+function UsersPage({ currentUser }) {
+  const [users, setUsers] = useState([]);
+  const [showAdd, setShowAdd] = useState(false);
+  const [showEdit, setShowEdit] = useState(null);
+  const [showResetPw, setShowResetPw] = useState(null);
+  const [hoverRow, setHoverRow] = useState(null);
+  const [form, setForm] = useState({ name:"", email:"", password:"", role:"viewer" });
+  const [newPassword, setNewPassword] = useState("");
+  const [toast, setToast] = useState(null);
+
+  const loadUsers = async () => {
+    try { setUsers(await api.users.list()); } catch {}
+  };
+  useEffect(() => { loadUsers(); }, []);
+
+  const handleCreate = async () => {
+    try {
+      await api.users.create(form);
+      setShowAdd(false);
+      setToast({ message: `User "${form.name}" created`, type: "success" });
+      loadUsers();
+    } catch (err) { setToast({ message: err.message, type: "error" }); }
+  };
+
+  const handleUpdate = async () => {
+    try {
+      await api.users.update(showEdit.id, { name: showEdit.name, email: showEdit.email, role: showEdit.role });
+      setShowEdit(null);
+      setToast({ message: "User updated", type: "success" });
+      loadUsers();
+    } catch (err) { setToast({ message: err.message, type: "error" }); }
+  };
+
+  const handleDelete = async (user) => {
+    if (!confirm(`Delete user "${user.name}"? This cannot be undone.`)) return;
+    try {
+      await api.users.delete(user.id);
+      setToast({ message: "User deleted", type: "success" });
+      loadUsers();
+    } catch (err) { setToast({ message: err.message, type: "error" }); }
+  };
+
+  const handleResetPassword = async () => {
+    try {
+      await api.users.resetPassword(showResetPw.id, newPassword);
+      setShowResetPw(null);
+      setNewPassword("");
+      setToast({ message: "Password reset", type: "success" });
+    } catch (err) { setToast({ message: err.message, type: "error" }); }
+  };
+
+  const isAdmin = currentUser?.role === "admin";
+
+  return (
+    <div>
+      {toast && <Toast {...toast} onClose={()=>setToast(null)} />}
+      <div style={{ display:"flex", justifyContent:"space-between", marginBottom:20, alignItems:"center" }}>
+        <div>
+          <div style={{ fontFamily: T.display, fontWeight:700, fontSize:18, marginBottom:4 }}>User Management</div>
+          <div style={{ color: T.muted, fontSize:12 }}>Manage platform users and roles. Admins can create reports and manage connectors. Viewers can only view reports.</div>
+        </div>
+        {isAdmin && <Btn variant="primary" onClick={()=>{ setShowAdd(true); setForm({ name:"", email:"", password:"", role:"viewer" }); }}>+ Add User</Btn>}
+      </div>
+
+      <div style={S.card}>
+        {users.length === 0 ? (
+          <div style={{ color: T.muted, fontSize:12, textAlign:"center", padding:24 }}>No users found.</div>
+        ) : (
+          <table style={S.table}>
+            <thead><tr>{["Name","Email","Role","Created",""].map(h=><th key={h} style={S.th}>{h}</th>)}</tr></thead>
+            <tbody>
+              {users.map(u=>(
+                <tr key={u.id} style={S.tr(hoverRow===u.id)} onMouseEnter={()=>setHoverRow(u.id)} onMouseLeave={()=>setHoverRow(null)}>
+                  <td style={S.td}>
+                    <span style={{ fontWeight:600 }}>{u.name}</span>
+                    {u.id === currentUser?.id && <span style={{ ...S.badge(T.accent), marginLeft:8, fontSize:9 }}>You</span>}
+                  </td>
+                  <td style={{ ...S.td, color: T.textDim }}>{u.email}</td>
+                  <td style={S.td}><Badge label={u.role} color={u.role==="admin" ? T.amber : T.accent} /></td>
+                  <td style={{ ...S.td, color: T.muted, fontSize:11 }}>{new Date(u.created_at).toLocaleDateString()}</td>
+                  <td style={S.td}>
+                    {isAdmin && (
+                      <div style={{ display:"flex", gap:6 }}>
+                        <Btn variant="ghost" style={{ padding:"4px 10px", fontSize:11 }} onClick={()=>setShowEdit({...u})}>Edit</Btn>
+                        <Btn variant="ghost" style={{ padding:"4px 10px", fontSize:11 }} onClick={()=>{ setShowResetPw(u); setNewPassword(""); }}>Reset PW</Btn>
+                        {u.id !== currentUser?.id && <Btn variant="danger" style={{ padding:"4px 10px", fontSize:11 }} onClick={()=>handleDelete(u)}>Delete</Btn>}
+                      </div>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+
+      {/* Add User Modal */}
+      {showAdd && (
+        <Modal title="Add User" onClose={()=>setShowAdd(false)}>
+          <div style={S.formGrid}>
+            <div style={S.formRow}>
+              <label style={S.label}>Full Name</label>
+              <input style={S.input} placeholder="John Doe" value={form.name} onChange={e=>setForm({...form,name:e.target.value})} />
+            </div>
+            <div style={S.formRow}>
+              <label style={S.label}>Role</label>
+              <select style={S.select} value={form.role} onChange={e=>setForm({...form,role:e.target.value})}>
+                <option value="viewer">Viewer — can view reports only</option>
+                <option value="admin">Admin — full access</option>
+              </select>
+            </div>
+          </div>
+          <div style={S.formRow}>
+            <label style={S.label}>Email</label>
+            <input style={S.input} type="email" placeholder="user@company.com" value={form.email} onChange={e=>setForm({...form,email:e.target.value})} />
+          </div>
+          <div style={S.formRow}>
+            <label style={S.label}>Password</label>
+            <input style={S.input} type="password" placeholder="Minimum 6 characters" value={form.password} onChange={e=>setForm({...form,password:e.target.value})} />
+          </div>
+          <div style={{ display:"flex", justifyContent:"flex-end", gap:10, marginTop:8 }}>
+            <Btn variant="ghost" onClick={()=>setShowAdd(false)}>Cancel</Btn>
+            <Btn variant="primary" onClick={handleCreate} disabled={!form.name || !form.email || !form.password || form.password.length < 6}>Create User</Btn>
+          </div>
+        </Modal>
+      )}
+
+      {/* Edit User Modal */}
+      {showEdit && (
+        <Modal title="Edit User" onClose={()=>setShowEdit(null)}>
+          <div style={S.formGrid}>
+            <div style={S.formRow}>
+              <label style={S.label}>Full Name</label>
+              <input style={S.input} value={showEdit.name} onChange={e=>setShowEdit({...showEdit,name:e.target.value})} />
+            </div>
+            <div style={S.formRow}>
+              <label style={S.label}>Role</label>
+              <select style={S.select} value={showEdit.role} onChange={e=>setShowEdit({...showEdit,role:e.target.value})}>
+                <option value="viewer">Viewer</option>
+                <option value="admin">Admin</option>
+              </select>
+            </div>
+          </div>
+          <div style={S.formRow}>
+            <label style={S.label}>Email</label>
+            <input style={S.input} type="email" value={showEdit.email} onChange={e=>setShowEdit({...showEdit,email:e.target.value})} />
+          </div>
+          <div style={{ display:"flex", justifyContent:"flex-end", gap:10, marginTop:8 }}>
+            <Btn variant="ghost" onClick={()=>setShowEdit(null)}>Cancel</Btn>
+            <Btn variant="primary" onClick={handleUpdate}>Save Changes</Btn>
+          </div>
+        </Modal>
+      )}
+
+      {/* Reset Password Modal */}
+      {showResetPw && (
+        <Modal title={`Reset Password — ${showResetPw.name}`} onClose={()=>setShowResetPw(null)} width="420px">
+          <div style={S.formRow}>
+            <label style={S.label}>New Password</label>
+            <input style={S.input} type="password" placeholder="Minimum 6 characters" value={newPassword} onChange={e=>setNewPassword(e.target.value)} />
+          </div>
+          <div style={{ display:"flex", justifyContent:"flex-end", gap:10, marginTop:8 }}>
+            <Btn variant="ghost" onClick={()=>setShowResetPw(null)}>Cancel</Btn>
+            <Btn variant="primary" onClick={handleResetPassword} disabled={newPassword.length < 6}>Reset Password</Btn>
+          </div>
+        </Modal>
+      )}
+    </div>
+  );
+}
+
 // ── Navigation Config ─────────────────────────────────────
 const NAV = [
   { id:"dashboard", label:"Dashboard", icon:"◈" },
@@ -1146,13 +1361,14 @@ const NAV = [
   { id:"builder", label:"Report Builder", icon:"⊞" },
   { id:"reports", label:"Report Library", icon:"≡" },
   { id:"clients", label:"Clients", icon:"◉" },
+  { id:"users", label:"Users", icon:"👤" },
   { id:"settings", label:"Settings", icon:"⚙" },
 ];
 
 const PAGE_TITLES = {
   dashboard:"Dashboard", connectors:"Integration Connectors",
   builder:"Report Builder", reports:"Report Library",
-  clients:"Client Management", settings:"Settings",
+  clients:"Client Management", users:"User Management", settings:"Settings",
 };
 
 // ── Root App ──────────────────────────────────────────────
@@ -1213,7 +1429,8 @@ export default function App() {
       case "builder": return <ReportBuilderPage connectorData={connectorData} onRefresh={loadAllData} />;
       case "reports": return <ReportsPage data={templateData} clientData={clientData} onRefresh={loadAllData} />;
       case "clients": return <ClientsPage data={clientData} connectorData={connectorData} onRefresh={loadAllData} />;
-      case "settings": return <SettingsPage />;
+      case "users": return <UsersPage currentUser={user} />;
+      case "settings": return <SettingsPage currentUser={user} />;
       default: return <DashboardPage connectorData={connectorData} clientData={clientData} reportData={templateData} runData={runData} />;
     }
   };

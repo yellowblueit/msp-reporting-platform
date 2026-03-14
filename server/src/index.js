@@ -20,6 +20,7 @@ import scheduleRoutes from './routes/schedules.js';
 import runRoutes from './routes/runs.js';
 import aiRoutes from './routes/ai.js';
 import settingsRoutes from './routes/settings.js';
+import userRoutes from './routes/users.js';
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -48,6 +49,7 @@ app.use('/api/schedules', authenticateToken, apiRateLimiter, scheduleRoutes);
 app.use('/api/runs', authenticateToken, apiRateLimiter, runRoutes);
 app.use('/api/ai', authenticateToken, aiRateLimiter, aiRoutes);
 app.use('/api/settings', authenticateToken, settingsRoutes);
+app.use('/api/users', authenticateToken, apiRateLimiter, userRoutes);
 
 // Serve frontend in production
 if (process.env.NODE_ENV === 'production') {
