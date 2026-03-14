@@ -9,6 +9,7 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql/data
       - ./server/src/migrations/001_initial.sql:/docker-entrypoint-initdb.d/001_initial.sql
+      - ./server/src/migrations/002_integration_library.sql:/docker-entrypoint-initdb.d/002_integration_library.sql
     # Don't expose DB to the internet in production
     # ports:
     #   - "5432:5432"

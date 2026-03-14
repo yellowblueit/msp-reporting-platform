@@ -114,6 +114,14 @@ export const users = {
   updateProfile: (data) => request('PUT', '/users/me/profile', data),
 };
 
+// Integrations
+export const integrations = {
+  list: () => request('GET', '/integrations'),
+  get: (slug) => request('GET', `/integrations/${slug}`),
+  activate: (slug, credentials) => request('POST', `/integrations/${slug}/activate`, credentials ? { credentials } : {}),
+  updateCredentials: (connectorId, credentials) => request('PUT', `/integrations/${connectorId}/credentials`, { credentials }),
+};
+
 // Settings
 export const settings = {
   get: () => request('GET', '/settings'),

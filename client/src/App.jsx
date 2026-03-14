@@ -438,6 +438,14 @@ function DashboardPage({ connectorData, clientData, reportData, runData }) {
 
 // ── Page: Connectors ──────────────────────────────────────
 function ConnectorsPage({ data, onRefresh }) {
+  // Integration library state
+  const [integrationList, setIntegrationList] = useState([]);
+  const [activating, setActivating] = useState(null);
+  const [showCreds, setShowCreds] = useState(null); // { connectorId, template }
+  const [credForm, setCredForm] = useState({});
+  const [hoverLib, setHoverLib] = useState(null);
+
+  // Custom connector wizard state
   const [showAdd, setShowAdd] = useState(false);
   const [step, setStep] = useState(1);
   const [form, setForm] = useState({ name:"", category:"RMM", baseUrl:"", authType:"apikey", headerName:"X-API-Key", apiKey:"", token:"", clientId:"", clientSecret:"", username:"", password:"" });
@@ -449,6 +457,45 @@ function ConnectorsPage({ data, onRefresh }) {
   const [hoverRow, setHoverRow] = useState(null);
   const [toast, setToast] = useState(null);
 
+  // Load integration templates
+  useEffect(() => {
+    api.integrations.list().then(setIntegrationList).catch(() => {});
+  }, []);
+
+  const activatedNames = data.map(c => c.name);
+
+  const handleActivate = async (template) => {
+    setActivating(template.slug);
+    try {
+      const result = await api.integrations.activate(template.slug);
+      setToast({ message: `${template.name} activated with ${result.fieldsCreated} fields`, type: "success" });
+      onRefresh();
+      // Open credentials modal
+      setShowCreds({ connectorId: result.connector.id, template });
+      setCredForm({});
+    } catch (err) {
+      if (err.message.includes("already activated")) {
+        setToast({ message: `${template.name} is already activated`, type: "warning" });
+      } else {
+        setToast({ message: err.message, type: "error" });
+      }
+    } finally {
+      setActivating(null);
+    }
+  };
+
+  const handleSaveCreds = async () => {
+    try {
+      await api.integrations.updateCredentials(showCreds.connectorId, credForm);
+      setShowCreds(null);
+      setToast({ message: "Credentials saved", type: "success" });
+      onRefresh();
+    } catch (err) {
+      setToast({ message: err.message, type: "error" });
+    }
+  };
+
+  // Custom connector handlers (existing)
   const handleCreate = async () => {
     try {
       const authConfig = form.authType === "apikey" ? { headerName: form.headerName, apiKey: form.apiKey }
@@ -484,26 +531,6 @@ function ConnectorsPage({ data, onRefresh }) {
     }
   };
 
-  const handleDiscover = async () => {
-    setDiscovering(true);
-    try {
-      // Find the connector we just created (or use first matching name)
-      const latest = data.find(c => c.name === form.name) || data[data.length - 1];
-      if (latest) {
-        const discoverPayload = discoverMode === "url"
-          ? { apiDocsUrl: docUrl }
-          : { apiDocsText: docText };
-        const result = await api.connectors.discover(latest.id, discoverPayload);
-        setDiscoveredFields(result.fields || []);
-      }
-      setStep(3);
-    } catch (err) {
-      setToast({ message: err.message, type: "error" });
-    } finally {
-      setDiscovering(false);
-    }
-  };
-
   const handleSave = () => {
     setShowAdd(false);
     setToast({ message: "Connector saved with discovered fields", type: "success" });
@@ -523,55 +550,145 @@ function ConnectorsPage({ data, onRefresh }) {
     <div>
       {toast && <Toast {...toast} onClose={()=>setToast(null)} />}
 
-      <div style={{ display:"flex", justifyContent:"space-between", marginBottom:20, alignItems:"center" }}>
-        <div>
-          <div style={{ fontFamily: T.display, fontWeight:700, fontSize:18, marginBottom:4 }}>Integration Connectors</div>
-          <div style={{ color: T.muted, fontSize:12 }}>Define SaaS platforms. Claude AI auto-discovers available fields from your API credentials and documentation.</div>
+      {/* ── Integration Library ── */}
+      <div style={{ marginBottom:32 }}>
+        <div style={{ display:"flex", justifyContent:"space-between", marginBottom:16, alignItems:"center" }}>
+          <div>
+            <div style={{ fontFamily: T.display, fontWeight:700, fontSize:18, marginBottom:4 }}>Integration Library</div>
+            <div style={{ color: T.muted, fontSize:12 }}>Pre-built integrations with auto-discovered fields. Click activate, enter your credentials, and you're connected.</div>
+          </div>
         </div>
-        <Btn variant="primary" onClick={()=>{ setShowAdd(true); resetForm(); }}>+ Add Connector</Btn>
+
+        <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:16 }}>
+          {integrationList.map(t => {
+            const isActivated = activatedNames.includes(t.name);
+            return (
+              <div key={t.slug} style={{
+                ...S.card, marginBottom:0,
+                borderLeft:`3px solid ${t.color || T.accent}`,
+                transition:"all 0.15s",
+                ...(hoverLib===t.slug ? { background:`${t.color||T.accent}08` } : {}),
+              }}
+              onMouseEnter={()=>setHoverLib(t.slug)} onMouseLeave={()=>setHoverLib(null)}>
+                <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:8 }}>
+                  <div>
+                    <div style={{ fontSize:28, marginBottom:6 }}>{t.icon || "🔌"}</div>
+                    <div style={{ fontFamily: T.display, fontWeight:700, fontSize:15 }}>{t.name}</div>
+                    <Badge label={t.category} color={t.color || T.accent} />
+                  </div>
+                  {isActivated && <Badge label="Active" color={T.green} />}
+                </div>
+                <div style={{ color: T.textDim, fontSize:11, lineHeight:"1.5", marginBottom:12, minHeight:32 }}>{t.description}</div>
+                <div style={{ display:"flex", gap:8, alignItems:"center" }}>
+                  {isActivated ? (
+                    <Btn variant="success" style={{ fontSize:11, padding:"6px 12px" }} onClick={() => {
+                      const conn = data.find(c => c.name === t.name);
+                      if (conn) setShowCreds({ connectorId: conn.id, template: t });
+                      setCredForm({});
+                    }}>Configure Credentials</Btn>
+                  ) : (
+                    <Btn variant="primary" style={{ fontSize:11, padding:"6px 12px" }}
+                      onClick={()=>handleActivate(t)} disabled={activating===t.slug}>
+                      {activating===t.slug ? "Activating..." : "Activate"}
+                    </Btn>
+                  )}
+                  {t.docs_url && (
+                    <a href={t.docs_url} target="_blank" rel="noopener noreferrer"
+                      style={{ fontSize:10, color: T.muted, textDecoration:"none" }}>API Docs</a>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+          {integrationList.length === 0 && (
+            <div style={{ ...S.card, marginBottom:0, gridColumn:"span 3", textAlign:"center", color: T.muted, padding:24 }}>
+              No integration templates available yet.
+            </div>
+          )}
+        </div>
       </div>
 
-      <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:16 }}>
-        {data.map(c => (
-          <div key={c.id} style={{
-            ...S.card, marginBottom:0, borderLeft:`3px solid ${c.color || T.accent}`,
-            cursor:"pointer", transition:"all 0.15s",
-            ...(hoverRow===c.id ? { borderColor: c.color||T.accent, background:`${c.color||T.accent}08` } : {}),
-          }}
-          onMouseEnter={()=>setHoverRow(c.id)} onMouseLeave={()=>setHoverRow(null)}>
-            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:12 }}>
-              <div>
-                <div style={{ fontSize:22, marginBottom:6 }}>{c.icon || "🔌"}</div>
-                <div style={{ fontFamily: T.display, fontWeight:700, fontSize:14 }}>{c.name}</div>
-                <div style={{ color: T.muted, fontSize:11, marginTop:2 }}>{c.category}</div>
-              </div>
-              <StatusDot status={c.status} />
-            </div>
-            <div style={{ display:"flex", gap:12, marginTop:12, paddingTop:12, borderTop:`1px solid ${T.border}` }}>
-              <div style={{ textAlign:"center" }}>
-                <div style={{ fontSize:18, fontWeight:800, color: c.color||T.accent, fontFamily: T.display }}>{c.field_count || 0}</div>
-                <div style={{ fontSize:10, color: T.muted }}>FIELDS</div>
-              </div>
-              <div style={{ textAlign:"center" }}>
-                <div style={{ fontSize:18, fontWeight:800, color: T.text, fontFamily: T.display }}>{c.client_count || 0}</div>
-                <div style={{ fontSize:10, color: T.muted }}>CLIENTS</div>
-              </div>
-              <div style={{ textAlign:"center" }}>
-                <div style={{ fontSize:11, color: T.muted, paddingTop:4 }}>{(c.auth_type||"").toUpperCase()}</div>
-                <div style={{ fontSize:10, color: T.muted }}>AUTH</div>
-              </div>
-            </div>
+      {/* ── Active Connectors ── */}
+      <div>
+        <div style={{ display:"flex", justifyContent:"space-between", marginBottom:16, alignItems:"center" }}>
+          <div>
+            <div style={{ fontFamily: T.display, fontWeight:700, fontSize:18, marginBottom:4 }}>Active Connectors</div>
+            <div style={{ color: T.muted, fontSize:12 }}>Activated integrations and custom connectors.</div>
           </div>
-        ))}
-        {data.length === 0 && (
-          <div style={{ ...S.card, marginBottom:0, gridColumn:"span 3", textAlign:"center", color: T.muted, padding:40 }}>
-            No connectors yet. Click "Add Connector" to get started.
-          </div>
-        )}
+          <Btn variant="ghost" onClick={()=>{ setShowAdd(true); resetForm(); }}>+ Custom Connector</Btn>
+        </div>
+
+        <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:16 }}>
+          {data.map(c => (
+            <div key={c.id} style={{
+              ...S.card, marginBottom:0, borderLeft:`3px solid ${c.color || T.accent}`,
+              cursor:"pointer", transition:"all 0.15s",
+              ...(hoverRow===c.id ? { borderColor: c.color||T.accent, background:`${c.color||T.accent}08` } : {}),
+            }}
+            onMouseEnter={()=>setHoverRow(c.id)} onMouseLeave={()=>setHoverRow(null)}>
+              <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:12 }}>
+                <div>
+                  <div style={{ fontSize:22, marginBottom:6 }}>{c.icon || "🔌"}</div>
+                  <div style={{ fontFamily: T.display, fontWeight:700, fontSize:14 }}>{c.name}</div>
+                  <div style={{ color: T.muted, fontSize:11, marginTop:2 }}>{c.category}</div>
+                </div>
+                <StatusDot status={c.status} />
+              </div>
+              <div style={{ display:"flex", gap:12, marginTop:12, paddingTop:12, borderTop:`1px solid ${T.border}` }}>
+                <div style={{ textAlign:"center" }}>
+                  <div style={{ fontSize:18, fontWeight:800, color: c.color||T.accent, fontFamily: T.display }}>{c.field_count || 0}</div>
+                  <div style={{ fontSize:10, color: T.muted }}>FIELDS</div>
+                </div>
+                <div style={{ textAlign:"center" }}>
+                  <div style={{ fontSize:18, fontWeight:800, color: T.text, fontFamily: T.display }}>{c.client_count || 0}</div>
+                  <div style={{ fontSize:10, color: T.muted }}>CLIENTS</div>
+                </div>
+                <div style={{ textAlign:"center" }}>
+                  <div style={{ fontSize:11, color: T.muted, paddingTop:4 }}>{(c.auth_type||"").toUpperCase()}</div>
+                  <div style={{ fontSize:10, color: T.muted }}>AUTH</div>
+                </div>
+              </div>
+            </div>
+          ))}
+          {data.length === 0 && (
+            <div style={{ ...S.card, marginBottom:0, gridColumn:"span 3", textAlign:"center", color: T.muted, padding:40 }}>
+              No active connectors. Activate an integration above or add a custom connector.
+            </div>
+          )}
+        </div>
       </div>
 
+      {/* ── Credentials Modal ── */}
+      {showCreds && (
+        <Modal title={`${showCreds.template.name} — Credentials`} onClose={()=>setShowCreds(null)} width="480px">
+          <div style={{ marginBottom:16, fontSize:12, color: T.textDim }}>
+            Enter your {showCreds.template.name} API credentials. These are encrypted with AES-256 and never exposed.
+          </div>
+          {(showCreds.template.auth_fields || []).map(f => (
+            <div key={f.key} style={S.formRow}>
+              <label style={S.label}>{f.label}</label>
+              <input
+                style={S.input}
+                type={f.type === "password" ? "password" : "text"}
+                placeholder={f.placeholder || ""}
+                value={credForm[f.key] || ""}
+                onChange={e => setCredForm({...credForm, [f.key]: e.target.value})}
+              />
+            </div>
+          ))}
+          <div style={{ display:"flex", justifyContent:"flex-end", gap:10, marginTop:12 }}>
+            <Btn variant="ghost" onClick={()=>setShowCreds(null)}>Cancel</Btn>
+            <Btn variant="primary" onClick={handleSaveCreds}
+              disabled={!(showCreds.template.auth_fields || []).every(f => credForm[f.key])}>
+              Save Credentials
+            </Btn>
+          </div>
+        </Modal>
+      )}
+
+      {/* ── Custom Connector Wizard (existing) ── */}
       {showAdd && (
-        <Modal title="Add New Connector" onClose={()=>setShowAdd(false)} width="680px">
+        <Modal title="Add Custom Connector" onClose={()=>setShowAdd(false)} width="680px">
           <div style={{ display:"flex", gap:8, marginBottom:24 }}>
             {["Connection","Discover","Review"].map((s,i)=>(
               <div key={s} style={{ display:"flex", alignItems:"center", gap:8 }}>
