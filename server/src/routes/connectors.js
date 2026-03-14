@@ -2,6 +2,7 @@ import { Router } from 'express';
 import db from '../config/database.js';
 import { encrypt } from '../services/encryption.js';
 import { discoverFields } from '../services/claudeService.js';
+import { fetchUrlContent } from '../services/urlFetcher.js';
 
 const router = Router();
 
@@ -99,11 +100,26 @@ router.delete('/:id', async (req, res) => {
 // Trigger AI field discovery
 router.post('/:id/discover', async (req, res) => {
   try {
-    const { apiDocsText, sampleJson } = req.body;
+    const { apiDocsText, apiDocsUrl, sampleJson } = req.body;
     const connector = await db.query('SELECT * FROM connectors WHERE id = $1', [req.params.id]);
     if (!connector.rows[0]) return res.status(404).json({ error: 'Connector not found' });
 
-    const fields = await discoverFields(apiDocsText, sampleJson, connector.rows[0].base_url);
+    let resolvedDocsText = apiDocsText || '';
+
+    if (apiDocsUrl) {
+      try {
+        const fetched = await fetchUrlContent(apiDocsUrl);
+        resolvedDocsText = fetched.text;
+      } catch (fetchErr) {
+        return res.status(400).json({ error: `Failed to fetch documentation URL: ${fetchErr.message}` });
+      }
+    }
+
+    if (!resolvedDocsText && !sampleJson) {
+      return res.status(400).json({ error: 'Provide apiDocsUrl, apiDocsText, or sampleJson' });
+    }
+
+    const fields = await discoverFields(resolvedDocsText, sampleJson, connector.rows[0].base_url);
 
     // Store discovered fields
     const inserted = [];

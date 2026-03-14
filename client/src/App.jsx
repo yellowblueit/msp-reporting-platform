@@ -441,6 +441,8 @@ function ConnectorsPage({ data, onRefresh }) {
   const [showAdd, setShowAdd] = useState(false);
   const [step, setStep] = useState(1);
   const [form, setForm] = useState({ name:"", category:"RMM", baseUrl:"", authType:"apikey", headerName:"X-API-Key", apiKey:"", token:"", clientId:"", clientSecret:"", username:"", password:"" });
+  const [discoverMode, setDiscoverMode] = useState("url");
+  const [docUrl, setDocUrl] = useState("");
   const [docText, setDocText] = useState("");
   const [discovering, setDiscovering] = useState(false);
   const [discoveredFields, setDiscoveredFields] = useState([]);
@@ -461,9 +463,13 @@ function ConnectorsPage({ data, onRefresh }) {
         authConfig,
       });
 
-      if (docText.trim()) {
+      const hasInput = discoverMode === "url" ? docUrl.trim() : docText.trim();
+      if (hasInput) {
         setDiscovering(true);
-        const result = await api.connectors.discover(connector.id, { apiDocsText: docText });
+        const discoverPayload = discoverMode === "url"
+          ? { apiDocsUrl: docUrl }
+          : { apiDocsText: docText };
+        const result = await api.connectors.discover(connector.id, discoverPayload);
         setDiscoveredFields(result.fields || []);
         setDiscovering(false);
         setStep(3);
@@ -484,7 +490,10 @@ function ConnectorsPage({ data, onRefresh }) {
       // Find the connector we just created (or use first matching name)
       const latest = data.find(c => c.name === form.name) || data[data.length - 1];
       if (latest) {
-        const result = await api.connectors.discover(latest.id, { apiDocsText: docText });
+        const discoverPayload = discoverMode === "url"
+          ? { apiDocsUrl: docUrl }
+          : { apiDocsText: docText };
+        const result = await api.connectors.discover(latest.id, discoverPayload);
         setDiscoveredFields(result.fields || []);
       }
       setStep(3);
@@ -503,7 +512,9 @@ function ConnectorsPage({ data, onRefresh }) {
 
   const resetForm = () => {
     setForm({ name:"", category:"RMM", baseUrl:"", authType:"apikey", headerName:"X-API-Key", apiKey:"", token:"", clientId:"", clientSecret:"", username:"", password:"" });
+    setDocUrl("");
     setDocText("");
+    setDiscoverMode("url");
     setStep(1);
     setDiscoveredFields([]);
   };
@@ -659,18 +670,49 @@ function ConnectorsPage({ data, onRefresh }) {
               <AIPanel
                 title="Claude AI — Field Discovery"
                 body={discovering ? null :
-                  `Paste API documentation, a sample JSON response, or an OpenAPI/Swagger URL. Claude will extract all available fields, infer data types, and build your field catalog automatically.`}
+                  `Provide a link to API documentation or paste text directly. Claude will extract all available fields, infer data types, and build your field catalog automatically.`}
                 loading={discovering}
               />
-              <div style={S.formRow}>
-                <label style={S.label}>API Documentation / Sample Response</label>
-                <textarea style={S.textarea} placeholder={`Paste API docs, JSON response, or describe the API...\n\nExamples:\n• { "devices": [{ "hostname": "...", "osName": "...", "lastContact": "..." }] }\n• Plain text endpoint documentation`}
-                  value={docText} onChange={e=>setDocText(e.target.value)} />
+
+              <div style={{ display:"flex", marginBottom:16, background: T.surface, borderRadius:6, border:`1px solid ${T.border}`, overflow:"hidden" }}>
+                {[
+                  { key:"url", label:"Documentation URL" },
+                  { key:"paste", label:"Paste Text / JSON" },
+                ].map(opt=>(
+                  <button key={opt.key} onClick={()=>setDiscoverMode(opt.key)} style={{
+                    flex:1, padding:"10px 16px", border:"none", cursor:"pointer",
+                    fontSize:12, fontFamily: T.font, fontWeight:600,
+                    background: discoverMode===opt.key ? `${T.accent}20` : "transparent",
+                    color: discoverMode===opt.key ? T.accent : T.textDim,
+                    borderBottom: discoverMode===opt.key ? `2px solid ${T.accent}` : "2px solid transparent",
+                    transition:"all 0.15s",
+                  }}>{opt.label}</button>
+                ))}
               </div>
+
+              {discoverMode === "url" && (
+                <div style={S.formRow}>
+                  <label style={S.label}>API Documentation URL</label>
+                  <input style={S.input} type="url" placeholder="https://docs.example.com/api/reference"
+                    value={docUrl} onChange={e=>setDocUrl(e.target.value)} />
+                  <div style={{ fontSize:10, color: T.muted, marginTop:6 }}>
+                    Enter the URL of the API reference page. HTTPS only. The server will fetch and analyze the page content.
+                  </div>
+                </div>
+              )}
+
+              {discoverMode === "paste" && (
+                <div style={S.formRow}>
+                  <label style={S.label}>API Documentation / Sample Response</label>
+                  <textarea style={S.textarea} placeholder={`Paste API docs, JSON response, or describe the API...\n\nExamples:\n• { "devices": [{ "hostname": "...", "osName": "..." }] }\n• Plain text endpoint documentation`}
+                    value={docText} onChange={e=>setDocText(e.target.value)} />
+                </div>
+              )}
+
               <div style={{ display:"flex", justifyContent:"flex-end", gap:10, marginTop:8 }}>
                 <Btn variant="ghost" onClick={()=>setStep(1)}>← Back</Btn>
                 <Btn variant="primary" onClick={handleCreate} disabled={discovering}>
-                  {discovering ? "✦ Discovering..." : docText.trim() ? "✦ Create & Discover Fields" : "Create Connector"}
+                  {discovering ? "✦ Discovering..." : (discoverMode==="url" ? docUrl.trim() : docText.trim()) ? "✦ Create & Discover Fields" : "Create Connector"}
                 </Btn>
               </div>
             </>
